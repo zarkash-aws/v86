@@ -1,5 +1,8 @@
 {
   "name": "v86",
   "version": "0",
-  "license": "BSD-2-Clause"
+  "license": "BSD-2-Clause",
+  "dependencies": {
+    "@xterm/xterm": "^5.5.0"
+  }
 }

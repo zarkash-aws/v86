@@ -19,19 +19,15 @@ window.onload = function()
         memory_size: 512 * 1024 * 1024,
         vga_memory_size: 8 * 1024 * 1024,
         screen_container: document.getElementById("screen_container"),
-        bios: {
-            url: "../bios/seabios.bin",
-        },
-        vga_bios: {
-            url: "../bios/vgabios.bin",
-        },
-        initial_state: {
-            url: "../images/arch_state.bin.zst",
-        },
+        bios: { url: "../bios/seabios.bin" },
+        vga_bios: { url: "../bios/vgabios.bin" },
         filesystem: {
-            baseurl: "../images/arch/",
+            baseurl: "../images/alpine-rootfs-flat",
+            basefs: "../images/alpine-fs.json",
         },
         autostart: true,
+        bzimage_initrd_from_filesystem: true,
+        cmdline: "rw root=host9p rootfstype=9p rootflags=trans=virtio,cache=loose modules=virtio_pci tsc=reliable",
     });
 
     document.getElementById("status").textContent += ".";

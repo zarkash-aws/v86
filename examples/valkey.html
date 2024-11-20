@@ -1,0 +1,286 @@
+<!doctype html>
+<title>TryValkey</title>
+
+<!-- Import Open Sans font from Google Fonts -->
+<link href="https://fonts.googleapis.com/css2?family=Open+Sans:wght@400&display=swap" rel="stylesheet">
+
+<script src="../build/libv86.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pako/2.1.0/pako.min.js"></script>
+
+<!-- Progress bar and message display -->
+<div id="loadingContainer" style="text-align: center; margin-top: 20px;">
+    <p id="progressText" style="font-family: 'Open Sans', sans-serif; font-size: 18px;">Preparing to load...</p>
+    <progress id="progressBar" value="0" max="100" style="width: 80%; height: 30px;"></progress>
+</div>
+
+<script>
+"use strict";
+
+const FILE_URL = "../images/valkey-state-new.bin.gz";  // Path to the .gz file
+const CACHE_KEY = "valkey_binary_cache";
+const LAST_MODIFIED_KEY = "valkey_last_modified";
+
+// Function to handle IndexedDB for binary storage
+function openIndexedDB() {
+    return new Promise((resolve, reject) => {
+        const request = indexedDB.open("binaryCacheDB", 1);
+        
+        request.onerror = () => reject("Error opening IndexedDB");
+        request.onsuccess = () => resolve(request.result);
+        
+        request.onupgradeneeded = function(event) {
+            const db = event.target.result;
+            db.createObjectStore("cache", { keyPath: "key" });
+        };
+    });
+}
+
+// Get the cached binary from IndexedDB
+function getCachedBinary(db) {
+    return new Promise((resolve, reject) => {
+        const transaction = db.transaction(["cache"], "readonly");
+        const objectStore = transaction.objectStore("cache");
+        const request = objectStore.get(CACHE_KEY);
+        
+        request.onerror = () => reject("Error retrieving cached binary");
+        request.onsuccess = () => resolve(request.result ? request.result.data : null);
+    });
+}
+
+// Save the binary to IndexedDB
+function saveBinaryToCache(db, data) {
+    return new Promise((resolve, reject) => {
+        const transaction = db.transaction(["cache"], "readwrite");
+        const objectStore = transaction.objectStore("cache");
+        const request = objectStore.put({ key: CACHE_KEY, data: data });
+        
+        request.onerror = () => reject("Error saving binary to cache");
+        request.onsuccess = () => resolve();
+    });
+}
+
+// Check with the server if the binary is updated (using Last-Modified header)
+function checkIfUpdated() {
+    return new Promise((resolve, reject) => {
+        const xhr = new XMLHttpRequest();
+        xhr.open("HEAD", FILE_URL, true);
+        
+        xhr.onload = () => {
+            const serverLastModified = xhr.getResponseHeader("Last-Modified");
+            const cachedLastModified = localStorage.getItem(LAST_MODIFIED_KEY);
+
+            if (!serverLastModified || serverLastModified !== cachedLastModified) {
+                // New version detected
+                localStorage.setItem(LAST_MODIFIED_KEY, serverLastModified);
+                resolve(true);  // Need to download
+            } else {
+                resolve(false);  // No changes, use cached
+            }
+        };
+        
+        xhr.onerror = () => reject("Error checking file version");
+        xhr.send();
+    });
+}
+
+// Download and decompress the binary if needed
+function downloadAndDecompressBinary(callback) {
+    let xhr = new XMLHttpRequest();
+    xhr.open("GET", FILE_URL, true);
+    xhr.responseType = "arraybuffer";  // Download the file as binary
+
+    xhr.onprogress = function(event) {
+        let progressText = document.getElementById("progressText");
+
+        if (event.lengthComputable) {
+            let percentComplete = (event.loaded / event.total) * 100;
+            progressBar.value = percentComplete;
+            progressText.innerText = `Downloading image: ${Math.floor(percentComplete)}% completed`;
+        }
+    };
+
+    xhr.onload = function() {
+        if (xhr.status === 200) {
+            let progressText = document.getElementById("progressText");
+            progressText.innerText = "Decompressing image...";
+
+            // Decompress the .gz file using pako
+            let decompressedData = pako.ungzip(new Uint8Array(xhr.response));
+            callback(decompressedData);
+        }
+    };
+
+    xhr.onerror = function() {
+        document.getElementById("progressText").innerText = "Download failed!";
+    };
+
+    xhr.send();
+}
+
+const logFilePath = "/tmp/valkey.log"; // Path for the log file
+
+// Main function to load the binary
+window.onload = async function() {
+    const db = await openIndexedDB();
+
+    try {
+        const needsDownload = await checkIfUpdated();
+
+        if (needsDownload) {
+            // Download, decompress, cache, and then load to emulator
+            downloadAndDecompressBinary(async (decompressedData) => {
+                await saveBinaryToCache(db, decompressedData);
+                loadEmulator(decompressedData);
+            });
+        } else {
+            // Load from cache
+            const cachedBinary = await getCachedBinary(db);
+            if (cachedBinary) {
+                loadEmulator(cachedBinary);
+            } else {
+                // Cache is empty, fallback to downloading
+                downloadAndDecompressBinary(async (decompressedData) => {
+                    await saveBinaryToCache(db, decompressedData);
+                    loadEmulator(decompressedData);
+                });
+            }
+        }
+    } catch (error) {
+        console.error("Error loading binary: ", error);
+        document.getElementById("progressText").innerText = "Failed to load binary.";
+    }
+};
+
+// Function to start the emulator with the binary data
+function loadEmulator(decompressedData) {
+    var progressText = document.getElementById("progressText");
+
+    // Convert decompressed data to Blob for v86
+    let blob = new Blob([decompressedData], { type: "application/octet-stream" });
+    let imgUrl = URL.createObjectURL(blob);
+
+    progressText.innerText = "Starting emulator...";
+
+    var emulator = new V86({
+        wasm_path: "../build/v86.wasm",
+        memory_size: 512 * 1024 * 1024,
+        vga_memory_size: 8 * 1024 * 1024,
+        screen_container: document.getElementById("screen_container"),
+        bios: { url: "../bios/seabios.bin" },
+        vga_bios: { url: "../bios/vgabios.bin" },
+        filesystem: {
+            baseurl: "../images/alpine-rootfs-flat",
+            basefs: "../images/alpine-fs.json",
+        },
+        autostart: true,
+        bzimage_initrd_from_filesystem: true,
+        cmdline: "rw root=host9p rootfstype=9p rootflags=trans=virtio,cache=loose modules=virtio_pci tsc=reliable",
+        initial_state: { url: imgUrl },
+    });
+
+    progressText.style.display = "none";  // Hide the text after emulator starts
+    
+    async function fetchLogContents() {
+        try {
+            const output = await emulator.read_file(logFilePath); // Read the contents of the log file
+            const logContent = String.fromCharCode.apply(null, output); // Convert the byte array to a string
+            const logOutput = document.getElementById("log_output");
+
+            // Print old contents of the log file first
+            logOutput.textContent = logContent;
+            // Scroll to the bottom of the log container
+            const logContainer = document.getElementById("log_container");
+            logContainer.scrollTop = logContainer.scrollHeight;
+        } catch (error) {
+            console.error("Error reading log file:", error);
+        }
+    }
+
+    // Function to print log contents at intervals (after old logs are printed)
+    async function printLogContents() {
+        await fetchLogContents();  // Fetch and print old log contents first
+        setInterval(fetchLogContents, 500); // Fetch and print log contents every 5 seconds
+    }
+
+    // Listener for emulator readiness
+    emulator.add_listener("emulator-ready", async function() {
+        await printLogContents(); // Start fetching and printing log contents after emulator is ready
+    });
+};
+
+</script>
+
+<style>
+    /* Full page background setup */
+    body, html {
+        margin: 0;
+        display: flex;
+        justify-content: center;
+        align-items: top;
+        background: radial-gradient(circle,  #e4eeff 0%,  #fcfdff);
+        font-family: 'Open Sans', sans-serif;
+        overflow-y: scroll;
+        display: flex;
+        flex-direction: column;
+        justify-content: center;
+        margin: 2%;
+        text-align: left;
+
+    }
+
+
+    #screen_container {
+        padding: 10px;
+        overflow-y: hidden;  /* Enable vertical scrolling */
+        background-color: rgba(0, 0, 0, 0.85);  /* Transparent black to mimic terminal */
+        border-radius: 10px;
+        box-shadow: 0px 0px 15px rgba(0, 0, 0, 0.5);  /* Soft shadow for 3D effect */
+        height: 950px;  /* Increase the height of the screen container */
+        width: 1290px;
+
+    }
+    #title {
+        font-size: 32px;
+        font-weight: bold;
+        color: #03256b;
+        margin-bottom: 20px;
+        text-align: left; /* Align title text to the left */
+    }
+
+    #description {
+        font-size: 20px;
+        color: #555;
+        margin-bottom: 20px;
+        margin-top: 20px;
+        font-weight: normal;
+        text-align: left; /* Align title text to the left */
+    }
+    #log_container {
+        padding: 10px;
+        height: 400px;  /* Increase the height of the screen container */
+        width: 1290px;
+        padding: 20px; /* Add some padding */
+        background-color: black; /* Set the log container background to black */
+        color: white; /* Set the text color in the log container to white */
+        white-space: pre-wrap; /* Preserve whitespace */
+        border-radius: 10px;
+        box-shadow: 0px 0px 15px rgba(0, 0, 0, 0.5);  /* Soft shadow for 3D effect */
+        font-size: 16px; /* Increase font size for readability */
+        font-family: monospace;
+        overflow-y: scroll;
+    }
+</style>
+
+    <div id="title">In-Browser Valkey</div>
+
+    <div id="description">Server Output:</div>
+    <div id="log_container">
+        <div id="log_output"></div>
+    </div>
+    <div id="description">Try the Valkey CLI below:</div>
+    <!-- Screen container -->
+    <div id="screen_container">
+        <div style="white-space: pre; font-family: 'Lucida Console', monospace; font-size: 14px; line-height: 14px;"></div>
+        <canvas style="display: none;"></canvas>
+    </div>
+

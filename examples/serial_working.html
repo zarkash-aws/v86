@@ -1,0 +1,261 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>v86 Serial Terminal with xterm.js</title>
+    <script src="../build/libv86.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/ansi_up@5.0.0/ansi_up.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/xterm@4.16.0/lib/xterm.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/pako/2.1.0/pako.min.js"></script>
+
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/xterm@4.16.0/css/xterm.css" />
+    <style>
+        .container {
+            max-width: 600px;
+            margin: 0 auto;
+            padding: 10px;
+        }
+
+        #terminal-container {
+            width: 100%;
+            height: 300px;
+            font-family: monospace;
+            border: 1px solid #ccc;
+            box-sizing: border-box;
+        }
+
+        #log { 
+            width: 100%; 
+            height: 100px; 
+            font-family: monospace; 
+            overflow-y: auto;
+        }
+
+        #loadingContainer {
+            text-align: center;
+            margin-top: 20px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h3>Serial Terminal Log</h3>
+        <textarea readonly id="log">Waiting for boot ...</textarea>
+
+        <h3>Terminal Output</h3>
+        <div id="terminal-container"></div>
+    </div>
+
+    <!-- Progress bar and message display -->
+    <div id="loadingContainer">
+        <p id="progressText" style="font-family: 'Open Sans', sans-serif; font-size: 18px;">Preparing to load...</p>
+        <progress id="progressBar" value="0" max="100" style="width: 80%; height: 30px;"></progress>
+    </div>
+
+    <script>
+        "use strict";
+        const FILE_URL = "../images/valkey-trapped-forwarding.bin.gz";  // Path to the .gz file
+        const CACHE_KEY = "valkey_binary_cache";
+        const LAST_MODIFIED_KEY = "valkey_last_modified";
+        let emulator;
+
+        // Function to handle IndexedDB for binary storage
+        async function openIndexedDB() {
+            return new Promise((resolve, reject) => {
+                const request = indexedDB.open("binaryCacheDB", 1);
+                
+                request.onerror = () => reject("Error opening IndexedDB");
+                request.onsuccess = () => resolve(request.result);
+                
+                request.onupgradeneeded = function(event) {
+                    const db = event.target.result;
+                    db.createObjectStore("cache", { keyPath: "key" });
+                };
+            });
+        }
+
+        // Get the cached binary from IndexedDB
+        async function getCachedBinary(db) {
+            return new Promise((resolve, reject) => {
+                const transaction = db.transaction(["cache"], "readonly");
+                const objectStore = transaction.objectStore("cache");
+                const request = objectStore.get(CACHE_KEY);
+                
+                request.onerror = () => reject("Error retrieving cached binary");
+                request.onsuccess = () => resolve(request.result ? request.result.data : null);
+            });
+        }
+
+        // Save the binary to IndexedDB
+        async function saveBinaryToCache(db, data) {
+            return new Promise((resolve, reject) => {
+                const transaction = db.transaction(["cache"], "readwrite");
+                const objectStore = transaction.objectStore("cache");
+                const request = objectStore.put({ key: CACHE_KEY, data: data });
+                
+                request.onerror = () => reject("Error saving binary to cache");
+                request.onsuccess = () => resolve();
+            });
+        }
+
+        // Check with the server if the binary is updated (using Last-Modified header)
+        async function checkIfUpdated() {
+            return new Promise((resolve, reject) => {
+                const xhr = new XMLHttpRequest();
+                xhr.open("HEAD", FILE_URL, true);
+                
+                xhr.onload = () => {
+                    const serverLastModified = xhr.getResponseHeader("Last-Modified");
+                    const cachedLastModified = localStorage.getItem(LAST_MODIFIED_KEY);
+
+                    if (!serverLastModified || serverLastModified !== cachedLastModified) {
+                        // New version detected
+                        localStorage.setItem(LAST_MODIFIED_KEY, serverLastModified);
+                        resolve(true);  // Need to download
+                    } else {
+                        resolve(false);  // No changes, use cached
+                    }
+                };
+                
+                xhr.onerror = () => reject("Error checking file version");
+                xhr.send();
+            });
+        }
+
+        // Download and decompress the binary if needed
+        function downloadAndDecompressBinary(callback) {
+            let xhr = new XMLHttpRequest();
+            xhr.open("GET", FILE_URL, true);
+            xhr.responseType = "arraybuffer";  // Download the file as binary
+
+            xhr.onprogress = function(event) {
+                const progressText = document.getElementById("progressText");
+                const progressBar = document.getElementById("progressBar");
+                if (event.lengthComputable) {
+                    const percentComplete = (event.loaded / event.total) * 100;
+                    progressBar.value = percentComplete;  // Update the progress bar value
+                }
+            };
+
+            xhr.onload = function() {
+                if (xhr.status === 200) {
+                    document.getElementById("progressText").innerText = "Decompressing image...";
+                    const decompressedData = pako.ungzip(new Uint8Array(xhr.response));
+                    callback(decompressedData);
+                }
+            };
+
+            xhr.onerror = function() {
+                document.getElementById("progressText").innerText = "Download failed!";
+            };
+
+            xhr.send();
+        }
+
+        async function loadEmulator(decompressedData) {
+            var progressText = document.getElementById("progressText");
+
+            // Convert decompressed data to Blob for v86
+            let blob = new Blob([decompressedData], { type: "application/octet-stream" });
+            let imgUrl = URL.createObjectURL(blob);
+
+            progressText.innerText = "Starting emulator...";
+
+            emulator = new V86({
+                wasm_path: "../build/v86.wasm",
+                memory_size: 512 * 1024 * 1024,
+                vga_memory_size: 8 * 1024 * 1024,
+                screen_container: document.getElementById("screen_container"),
+                bios: { url: "../bios/seabios.bin" },
+                vga_bios: { url: "../bios/vgabios.bin" },
+                filesystem: {
+                    baseurl: "../images/alpine-rootfs-flat",
+                    basefs: "../images/alpine-fs.json",
+                },
+                autostart: true,
+                bzimage_initrd_from_filesystem: true,
+                cmdline: "rw root=host9p rootfstype=9p rootflags=trans=virtio,cache=loose modules=virtio_pci tsc=reliable",
+                initial_state: { url: imgUrl },
+            });
+
+            // Initialize ansi_up for ANSI to HTML conversion
+            const ansi_up = new AnsiUp();
+
+            // Serial output handler
+            emulator.add_listener("serial0-output-byte", async function (byte) {
+                const char = String.fromCharCode(byte);
+                term.write(char);
+            });
+
+            progressText.style.display = "none";  // Hide the text after emulator starts
+            document.getElementById("loadingContainer").style.display = "none";  // Hide the loading container
+        }
+
+        window.onload = async function() {
+            const db = await openIndexedDB();
+            try {
+                const needsDownload = await checkIfUpdated();
+
+                if (needsDownload) {
+                    // Download, decompress, cache, and then load to emulator
+                    downloadAndDecompressBinary(async (decompressedData) => {
+                        await saveBinaryToCache(db, decompressedData);
+                        loadEmulator(decompressedData);
+                    });
+                } else {
+                    // Load from cache
+                    const cachedBinary = await getCachedBinary(db);
+                    if (cachedBinary) {
+                        loadEmulator(cachedBinary);
+                    } else {
+                        // Cache is empty, fallback to downloading
+                        downloadAndDecompressBinary(async (decompressedData) => {
+                            await saveBinaryToCache(db, decompressedData);
+                            loadEmulator(decompressedData);
+                        });
+                    }
+                }
+            } catch (error) {
+                console.error("Error loading binary: ", error);
+                document.getElementById("progressText").innerText = "Failed to load binary.";
+            }
+        };
+
+        // Initialize xterm.js terminal
+        const term = new Terminal({
+            cursorBlink: true,
+            rows: 20,
+            cols: 80,
+        });
+        term.open(document.getElementById('terminal-container'));
+
+        // Track input buffer for backspace handling
+        let inputBuffer = '';
+
+        // Handle terminal input and send it to the emulator
+        term.onData(data => {
+            if (data === '\u007F') { // Backspace character
+                // Only remove from buffer if there's something to delete
+                if (inputBuffer.length > 0) {
+                    inputBuffer = inputBuffer.slice(0, -1);
+                    term.write('\b \b'); // Erase last character
+                }
+            } 
+            else if (data === '\n' || data === '\r') {
+                inputBuffer.trim()
+                emulator.serial0_send(inputBuffer + '\n'); // Send data to the emulator
+                inputBuffer = ''
+            }
+            else {
+                term.write(data)
+                inputBuffer += data;
+            }
+        });
+    </script>
+</body>
+<div id="screen_container">
+    <div style="white-space: pre; font-family: 'Lucida Console', monospace; font-size: 14px; line-height: 14px;"></div>
+    <canvas style="display: none;"></canvas>
+</div>
+
+</html>

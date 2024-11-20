@@ -1,10 +1,66 @@
 <!doctype html>
-<title>Alpine</title>
+<title>Valkey CLI With Server Log</title>
 <script src="../build/libv86.js"></script>
+
+<!-- Import Open Sans font from Google Fonts -->
+<link href="https://fonts.googleapis.com/css2?family=Open+Sans:wght@400&display=swap" rel="stylesheet">
+
+<style>
+    body {
+        background-color: black; /* Set the body background color to black */
+        color: white; /* Set the default text color to white */
+        font-family: monospace; /* Use a monospace font for terminal-like appearance */
+        
+    }
+    
+    #screen_container {
+        height:600px; /* Set a fixed height for the log container */
+        overflow-y: auto; /* Enable vertical scrolling */
+        border: 1px solid #ccc; /* Optional: add a border */
+        padding: 10px; /* Add some padding */
+        background-color: black; /* Set the log container background to black */
+        color: white; /* Set the text color in the log container to white */
+        white-space: pre-wrap; /* Preserve whitespace */
+        font-size: 18px; /* Increase font size for readability */
+
+    }
+
+    #log_container {
+        height: 200px; /* Set a fixed height for the log container */
+        overflow-y: scroll; /* Enable vertical scrolling */
+        border: 1px solid #ccc; /* Optional: add a border */
+        padding: 10px; /* Add some padding */
+        background-color: black; /* Set the log container background to black */
+        color: white; /* Set the text color in the log container to white */
+        white-space: pre-wrap; /* Preserve whitespace */
+        font-size: 18px; /* Increase font size for readability */
+
+    }
+
+    input[type="button"], input[type="file"] {
+        background-color: #444; /* Darker background for buttons */
+        color: white; /* White text for buttons */
+        border: none; /* Remove border */
+        padding: 5px 10px; /* Add padding */
+        cursor: pointer; /* Change cursor to pointer */
+    }
+
+    input[type="button"]:hover {
+        background-color: #666; /* Lighter background on hover */
+    }
+
+    input[type="file"] {
+        color: white; /* White text for file input */
+        background-color: #444; /* Darker background for file input */
+    }
+
+    hr {
+        border: 1px solid #444; /* Lighter color for horizontal rule */
+    }
+</style>
 <script>
 "use strict";
-window.onload = function()
-{
+window.onload = function() {
     var emulator = new V86({
         wasm_path: "../build/v86.wasm",
         memory_size: 512 * 1024 * 1024,
@@ -16,14 +72,110 @@ window.onload = function()
             baseurl: "../images/alpine-rootfs-flat",
             basefs: "../images/alpine-fs.json",
         },
-        autostart: true,
+        autostart: false,
         bzimage_initrd_from_filesystem: true,
         cmdline: "rw root=host9p rootfstype=9p rootflags=trans=virtio,cache=loose modules=virtio_pci tsc=reliable",
-        //initial_state: { url: "../images/alpine-state.bin" },
     });
+
+    const logFilePath = "/tmp/valkey.log"; // Path for the log file
+
+    // Function to create a log file in the emulator
+    async function createLogFile() {
+        const logMessage = `Log started at ${new Date().toISOString()}\n`;
+        const buffer = new Uint8Array(logMessage.length);
+        buffer.set(logMessage.split("").map(function(chr) { return chr.charCodeAt(0); }));
+        
+        await emulator.create_file(logFilePath, buffer);
+        console.log("Log file created: " + logFilePath);
+    }
+
+    // Function to fetch log contents from the emulator
+    async function fetchLogContents() {
+        try {
+            const output = await emulator.read_file(logFilePath); // Read the contents of the log file
+            const logContent = String.fromCharCode.apply(null, output); // Convert the byte array to a string
+            document.getElementById("log_output").textContent = logContent; // Update the log output in the UI
+            // Scroll to the bottom of the log container
+            const logContainer = document.getElementById("log_container");
+            logContainer.scrollTop = logContainer.scrollHeight;
+        } catch (error) {
+            console.error("Error reading log file:", error);
+        }
+    }
+
+    // Function to print log contents at intervals
+    async function printLogContents() {
+        await fetchLogContents();
+        setInterval(fetchLogContents, 500); // Fetch and print log contents every 5 seconds
+    }
+
+    // Listener for emulator readiness
+    emulator.add_listener("emulator-ready", async function() {
+        await createLogFile(); // Create the log file in the emulator
+        await printLogContents(); // Start fetching and printing log contents
+    });
+
+    // Initializations
+    let state;
+    document.getElementById("save_restore").onclick = async function() {
+        var button = this;
+
+        if (state) {
+            button.value = "Save state";
+            await emulator.restore_state(state);
+            state = undefined;
+        } else {
+            const new_state = await emulator.save_state();
+            console.log("Saved state of " + new_state.byteLength + " bytes");
+            button.value = "Restore state";
+            state = new_state;
+        }
+
+        button.blur();
+    };
+
+    document.getElementById("save_file").onclick = async function() {
+        const new_state = await emulator.save_state();
+        var a = document.createElement("a");
+        a.download = "v86state.bin";
+        a.href = window.URL.createObjectURL(new Blob([new_state]));
+        a.dataset.downloadurl = "application/octet-stream:" + a.download + ":" + a.href;
+        a.click();
+
+        this.blur();
+    };
+
+    document.getElementById("restore_file").onchange = function() {
+        if (this.files.length) {
+            var filereader = new FileReader();
+            emulator.stop();
+
+            filereader.onload = async function(e) {
+                await emulator.restore_state(e.target.result);
+                emulator.run();
+            };
+
+            filereader.readAsArrayBuffer(this.files[0]);
+
+            this.value = "";
+        }
+
+        this.blur();
+    };
 };
 </script>
-<div id="screen_container">
-    <div style="white-space: pre; font: 14px monospace; line-height: 14px"></div>
-    <canvas style="display: none"></canvas>
+
+<input id="save_restore" type="button" value="Save state">
+<input id="save_file" type="button" value="Save state to file">
+Restore from file: <input id="restore_file" type="file">
+<hr>
+<h2>Server Output:</h2>
+<div id="log_container">
+    <div id="log_output"></div>
 </div>
+<hr>
+<div id="screen_container">
+    <div style="white-space: pre; font: 14px monospace; line-height: 14px; height: 600px; overflow-y: auto;"></div>
+    <canvas style="display: block"></canvas>
+</div>
+

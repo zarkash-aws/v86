@@ -1,0 +1,120 @@
+
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>v86 Serial Terminal</title>
+    <script src="../build/libv86.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/ansi_up@5.0.0/ansi_up.min.js"></script>
+    <style>
+        /* Container to center the terminal and log */
+        .container {
+            max-width: 600px; /* Set max width for the terminal */
+            margin: 0 auto; /* Center align */
+            padding: 10px;
+        }
+
+        #terminal {
+            width: 100%; /* Full width of the container */
+            height: 300px;
+            font-family: monospace;
+            overflow-y: auto; /* Enable vertical scrolling */
+            background-color: black;
+            color: white;
+            padding: 10px;
+            line-height: 1.2;
+            user-select: text; /* Allow text selection for copy-paste */
+            white-space: pre-wrap; /* Preserve whitespace and line breaks */
+            border: 1px solid #ccc; /* Optional border for better visibility */
+            box-sizing: border-box;
+        }
+
+        #log { width: 100%; height: 100px; font-family: monospace; }
+        #input { width: 100%; padding: 8px; font-family: monospace; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h3>Serial Terminal Log</h3>
+        <textarea readonly id="log">Waiting for boot ...</textarea>
+
+        <h3>Terminal Output</h3>
+        <div id="terminal"></div>
+
+        <h3>Enter Command</h3>
+        <input type="text" id="input" placeholder="Type command and press Enter" autofocus>
+
+    </div>
+
+    <script>
+        "use strict";
+
+        window.onload = function() {
+            const emulator = new V86({
+                wasm_path: "../build/v86.wasm",
+                memory_size: 512 * 1024 * 1024,
+                vga_memory_size: 8 * 1024 * 1024,
+                screen_container: document.getElementById("screen_container"),
+                bios: { url: "../bios/seabios.bin" },
+                vga_bios: { url: "../bios/vgabios.bin" },
+                filesystem: {
+                    baseurl: "../images/alpine-rootfs-flat",
+                    basefs: "../images/alpine-fs.json",
+                },
+                autostart: true,
+                bzimage_initrd_from_filesystem: true,
+                cmdline: "rw root=host9p rootfstype=9p rootflags=trans=virtio,cache=loose modules=virtio_pci tsc=reliable",
+                initial_state: { url: "../images/valkey-state.bin" },
+            });
+
+            const terminal = document.getElementById("terminal");
+            const log = document.getElementById("log");
+            const input = document.getElementById("input");
+
+            // Initialize ansi_up for ANSI to HTML conversion
+            const ansi_up = new AnsiUp();
+
+            // Buffer for command text
+            let inputBuffer = "\nvalkey-cli\n";
+
+            // Serial output handler with no duplication
+            emulator.add_listener("serial0-output-byte", function(byte) {
+                const char = String.fromCharCode(byte);
+                const html = ansi_up.ansi_to_html(char).replace(/\n/g, "<br>");
+
+                // Insert new content at the end of the terminal without replacing the entire content
+                terminal.insertAdjacentHTML("beforeend", html);
+
+                // Scroll to the bottom of the terminal to show the latest output
+                terminal.scrollTop = terminal.scrollHeight;
+            });
+            emulator.serial0_send(inputBuffer)
+            // Send command only when Enter is pressed
+            input.addEventListener("keydown", function(event) {
+                if (event.key === "Enter") {
+                    // Prevent default Enter behavior
+                    event.preventDefault();
+
+                    const command = input.value.trim(); // Trim to avoid trailing newlines
+                    if (command) {
+                        emulator.serial0_send(command + "\n"); // Send only one newline
+
+                        // Log the command sent
+                        log.value += `Sent: ${command}\n`;
+                        log.scrollTop = log.scrollHeight;
+
+                        // Clear the input field
+                        input.value = "";
+                    }
+                }
+            });
+        };
+    </script>    
+</body>
+<div id="screen_container">
+    <div style="white-space: pre; font-family: 'Lucida Console', monospace; font-size: 14px; line-height: 14px;"></div>
+    <canvas style="display: none;"></canvas>
+</div>
+
+</html>
+

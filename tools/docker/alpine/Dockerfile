@@ -3,7 +3,7 @@ FROM docker.io/i386/alpine:3.20.0
 ENV KERNEL=lts
 ENV ADDPKGS=nodejs
 
-RUN apk add openrc alpine-base agetty alpine-conf $ADDPKGS
+RUN apk add openrc alpine-base agetty alpine-conf $ADDPKGS gcompat libc6-compat valkey valkey-cli
 
 RUN if [ "$KERNEL" == "lts" ]; then \
     apk add linux-lts \
