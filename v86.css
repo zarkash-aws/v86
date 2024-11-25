@@ -182,7 +182,7 @@ input[type=checkbox] {
 }
 
 #terminal {
-    max-width: 1024px;
+    max-width: 100%;
 }
 .blink {
     animation: blink 0.6s step-start infinite;
@@ -277,6 +277,7 @@ input[type=checkbox] {
     left: 0;
     top: 0;
     bottom: 0;
+    width: 100%;
 }
 
 .xterm .xterm-screen {
@@ -291,6 +292,7 @@ input[type=checkbox] {
 
 .xterm .xterm-scroll-area {
     visibility: hidden;
+    width: 100%;
 }
 
 .xterm-char-measure-element {
