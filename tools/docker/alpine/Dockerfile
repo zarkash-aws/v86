@@ -14,16 +14,19 @@ else \
 fi
 
 RUN sed -i 's/getty 38400 tty1/agetty --autologin root tty1 linux/' /etc/inittab
-RUN echo 'ttyS0::respawn:/sbin/agetty --autologin root -s ttyS0 115200 vt100' >> /etc/inittab
+RUN echo 'ttyS0::respawn:/sbin/agetty -l/usr/bin/start.sh --autologin root -s ttyS0 115200 vt100' >> /etc/inittab
 RUN echo "root:" | chpasswd
-
+COPY start.sh /usr/bin/start.sh
+RUN chmod 755 /usr/bin/start.sh
+COPY networking.sh /usr/bin/networking.sh
+RUN chmod 755 /usr/bin/networking.sh
 RUN setup-hostname localhost
 
 # Adding networking.sh script (works only on lts kernel yet)
-RUN if [ "$KERNEL" == "lts" ]; then \
-    echo -e "rmmod ne2k-pci && modprobe ne2k-pci\nhwclock -s\nsetup-interfaces -a -r" > /root/networking.sh && \
-    chmod +x /root/networking.sh; \
-fi
+#RUN if [ "$KERNEL" == "lts" ]; then \
+#    echo -e "rmmod ne2k-pci && modprobe ne2k-pci\nhwclock -s\nsetup-interfaces -a -r" > /root/networking.sh && \
+#    chmod +x /root/networking.sh; \
+#fi
 
 RUN echo 'console.log("Hello, world!");' > /root/hello.js
 

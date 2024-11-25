@@ -6,6 +6,7 @@
     <script src="../build/libv86.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/ansi_up@5.0.0/ansi_up.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/xterm@4.16.0/lib/xterm.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/xterm-addon-fit/lib/xterm-addon-fit.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/pako/2.1.0/pako.min.js"></script>
 
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/xterm@4.16.0/css/xterm.css" />
@@ -54,7 +55,7 @@
 
     <script>
         "use strict";
-        const FILE_URL = "../images/valkey-trapped-forwarding.bin.gz";  // Path to the .gz file
+        const FILE_URL = "../images/valkey-serial.bin.gz";  // Path to the .gz file
         const CACHE_KEY = "valkey_binary_cache";
         const LAST_MODIFIED_KEY = "valkey_last_modified";
         let emulator;
@@ -169,8 +170,8 @@
                 bios: { url: "../bios/seabios.bin" },
                 vga_bios: { url: "../bios/vgabios.bin" },
                 filesystem: {
-                    baseurl: "../images/alpine-rootfs-flat",
-                    basefs: "../images/alpine-fs.json",
+                    baseurl: "../images/alpine-rootfs-flat-new",
+                    basefs: "../images/alpine-fs-new.json",
                 },
                 autostart: true,
                 bzimage_initrd_from_filesystem: true,
@@ -181,12 +182,34 @@
             // Initialize ansi_up for ANSI to HTML conversion
             const ansi_up = new AnsiUp();
 
-            // Serial output handler
-            emulator.add_listener("serial0-output-byte", async function (byte) {
-                const char = String.fromCharCode(byte);
-                term.write(char);
-            });
+            let inputBuffer = "";
+            emulator.serial0_send(inputBuffer);
 
+        // Handle emulator output
+        emulator.add_listener("serial0-output-byte", function (byte) {
+            const char = String.fromCharCode(byte);
+            console.log(`Received byte: ${byte} (${char})`); // Debug the output
+            term.write(char); // Write other characters directly
+        });
+            // Handle terminal input
+            term.onData((data) => {
+
+                if (data === '\x7F') {
+                    if (inputBuffer.length > 0) {
+                        inputBuffer = inputBuffer.slice(0, -1); // Remove last character from buffer
+                        term.write('\b \b'); // Visually remove character in terminal
+                    }
+                } else if (data === '\r') {
+                    inputBuffer.split('').forEach(char => {
+                        emulator.serial0_send(char); // Send the byte to the emulator
+                    });
+                    emulator.serial0_send("\r")
+                    inputBuffer = ""; // Clear the buffer
+                } else {
+                    inputBuffer += data; // Append to buffer
+                    term.write(data); // Send the keystroke to the emulator
+                }
+            });
             progressText.style.display = "none";  // Hide the text after emulator starts
             document.getElementById("loadingContainer").style.display = "none";  // Hide the loading container
         }
@@ -229,28 +252,6 @@
         });
         term.open(document.getElementById('terminal-container'));
 
-        // Track input buffer for backspace handling
-        let inputBuffer = '';
-
-        // Handle terminal input and send it to the emulator
-        term.onData(data => {
-            if (data === '\u007F') { // Backspace character
-                // Only remove from buffer if there's something to delete
-                if (inputBuffer.length > 0) {
-                    inputBuffer = inputBuffer.slice(0, -1);
-                    term.write('\b \b'); // Erase last character
-                }
-            } 
-            else if (data === '\n' || data === '\r') {
-                inputBuffer.trim()
-                emulator.serial0_send(inputBuffer + '\n'); // Send data to the emulator
-                inputBuffer = ''
-            }
-            else {
-                term.write(data)
-                inputBuffer += data;
-            }
-        });
     </script>
 </body>
 <div id="screen_container">

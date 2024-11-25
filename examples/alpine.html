@@ -69,10 +69,10 @@ window.onload = function() {
         bios: { url: "../bios/seabios.bin" },
         vga_bios: { url: "../bios/vgabios.bin" },
         filesystem: {
-            baseurl: "../images/alpine-rootfs-flat",
-            basefs: "../images/alpine-fs.json",
+            baseurl: "../images/alpine-rootfs-flat-new",
+            basefs: "../images/alpine-fs-new.json",
         },
-        autostart: false,
+        autostart: true,
         bzimage_initrd_from_filesystem: true,
         cmdline: "rw root=host9p rootfstype=9p rootflags=trans=virtio,cache=loose modules=virtio_pci tsc=reliable",
     });
