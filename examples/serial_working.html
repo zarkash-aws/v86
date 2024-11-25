@@ -11,7 +11,7 @@
     <script src="https://cdn.jsdelivr.net/npm/xterm@4.16.0/lib/xterm.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/xterm-addon-fit/lib/xterm-addon-fit.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/pako/2.1.0/pako.min.js"></script>
-    <script src="../src/browser/serial.js"></script>
+    <script src="../src/browser/serial_xterm.js"></script>
 
     <!-- Styles -->
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/xterm@4.16.0/css/xterm.css" />
@@ -53,13 +53,14 @@
 
         /* Container Styles */
         .container {
-            background: white;
+            background: rgb(47, 47, 47);
             border-radius: 16px;
             box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
             overflow: hidden;
-            max-width: 800px;
             display: flex;
             flex-direction: column;
+            padding: 10px;
+            overflow-y: hidden;
         }
 
         h1, h3 {
@@ -87,6 +88,9 @@
             background: #000;
             color: #fff;
             border: none;
+            overflow-y: hidden;
+            overflow-x: hidden;
+
         }
 
         #loadingContainer {
