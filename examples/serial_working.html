@@ -2,12 +2,13 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <title>v86 Serial Terminal with xterm.js</title>
+    <title>TryValkey</title>
     <script src="../build/libv86.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/ansi_up@5.0.0/ansi_up.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/xterm@4.16.0/lib/xterm.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/xterm-addon-fit/lib/xterm-addon-fit.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/pako/2.1.0/pako.min.js"></script>
+    <script src="../src/browser/serial.js"></script>
 
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/xterm@4.16.0/css/xterm.css" />
     <style>
@@ -25,13 +26,6 @@
             box-sizing: border-box;
         }
 
-        #log { 
-            width: 100%; 
-            height: 100px; 
-            font-family: monospace; 
-            overflow-y: auto;
-        }
-
         #loadingContainer {
             text-align: center;
             margin-top: 20px;
@@ -40,9 +34,6 @@
 </head>
 <body>
     <div class="container">
-        <h3>Serial Terminal Log</h3>
-        <textarea readonly id="log">Waiting for boot ...</textarea>
-
         <h3>Terminal Output</h3>
         <div id="terminal-container"></div>
     </div>
@@ -166,7 +157,6 @@
                 wasm_path: "../build/v86.wasm",
                 memory_size: 512 * 1024 * 1024,
                 vga_memory_size: 8 * 1024 * 1024,
-                screen_container: document.getElementById("screen_container"),
                 bios: { url: "../bios/seabios.bin" },
                 vga_bios: { url: "../bios/vgabios.bin" },
                 filesystem: {
@@ -179,37 +169,9 @@
                 initial_state: { url: imgUrl },
             });
 
-            // Initialize ansi_up for ANSI to HTML conversion
-            const ansi_up = new AnsiUp();
+            const serialAdapter = new SerialAdapterXtermJS(document.getElementById('terminal-container'), emulator.bus)
+            serialAdapter.show()
 
-            let inputBuffer = "";
-            emulator.serial0_send(inputBuffer);
-
-        // Handle emulator output
-        emulator.add_listener("serial0-output-byte", function (byte) {
-            const char = String.fromCharCode(byte);
-            console.log(`Received byte: ${byte} (${char})`); // Debug the output
-            term.write(char); // Write other characters directly
-        });
-            // Handle terminal input
-            term.onData((data) => {
-
-                if (data === '\x7F') {
-                    if (inputBuffer.length > 0) {
-                        inputBuffer = inputBuffer.slice(0, -1); // Remove last character from buffer
-                        term.write('\b \b'); // Visually remove character in terminal
-                    }
-                } else if (data === '\r') {
-                    inputBuffer.split('').forEach(char => {
-                        emulator.serial0_send(char); // Send the byte to the emulator
-                    });
-                    emulator.serial0_send("\r")
-                    inputBuffer = ""; // Clear the buffer
-                } else {
-                    inputBuffer += data; // Append to buffer
-                    term.write(data); // Send the keystroke to the emulator
-                }
-            });
             progressText.style.display = "none";  // Hide the text after emulator starts
             document.getElementById("loadingContainer").style.display = "none";  // Hide the loading container
         }
@@ -244,19 +206,8 @@
             }
         };
 
-        // Initialize xterm.js terminal
-        const term = new Terminal({
-            cursorBlink: true,
-            rows: 20,
-            cols: 80,
-        });
-        term.open(document.getElementById('terminal-container'));
 
     </script>
 </body>
-<div id="screen_container">
-    <div style="white-space: pre; font-family: 'Lucida Console', monospace; font-size: 14px; line-height: 14px;"></div>
-    <canvas style="display: none;"></canvas>
-</div>
 
 </html>

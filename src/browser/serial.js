@@ -228,7 +228,7 @@ function SerialAdapterXtermJS(element, bus)
     var term = this.term = new window["Terminal"]({
         "logLevel": "off",
     });
-    term.write("This is the serial console. Whatever you type or paste here will be sent to COM1");
+    term.write("press enter to begin");
 
     const on_data_disposable = term["onData"](function(data) {
         for(let i = 0; i < data.length; i++)
